@@ -1,0 +1,46 @@
+{
+  "_comment": "The report's rows, in display order. 'name' and 'description' are the user-facing copy for the first two report columns. The Python engine (engine/extract.py) returns one result per 'key'; tests/test_extract.py fails if the two ever drift apart.",
+  "sections": [
+    { "key": "document", "name": "Document Metadata" },
+    { "key": "layers", "name": "Layer & Object Data" },
+    { "key": "scale", "name": "Scale & Georeference" },
+    { "key": "navigation", "name": "Navigation & Interactive Elements" },
+    { "key": "assets", "name": "Embedded Assets" },
+    { "key": "security", "name": "Security" }
+  ],
+  "fields": [
+    { "key": "title", "section": "document", "name": "Title", "description": "Document title stored in the file's properties." },
+    { "key": "author", "section": "document", "name": "Author", "description": "Person or organization recorded as the document's author." },
+    { "key": "subject", "section": "document", "name": "Subject", "description": "Subject line stored in the file's properties." },
+    { "key": "keywords", "section": "document", "name": "Keywords", "description": "Search keywords stored in the file's properties." },
+    { "key": "creator", "section": "document", "name": "Creator Application", "description": "Software that created the original document before it became a PDF." },
+    { "key": "producer", "section": "document", "name": "Producer Application", "description": "Software library or print driver that wrote the PDF file." },
+    { "key": "created", "section": "document", "name": "Created Date", "description": "Date and time the PDF was created." },
+    { "key": "modified", "section": "document", "name": "Modified Date", "description": "Date and time the PDF was last modified." },
+    { "key": "page_count", "section": "document", "name": "Page Count", "description": "Number of pages in the file." },
+    { "key": "page_sizes", "section": "document", "name": "Page Size(s)", "description": "Sheet dimensions of each page. Mixed sheet sizes are flagged." },
+    { "key": "page_units", "section": "document", "name": "Page Units", "description": "Base unit of the page coordinate system. The PDF default is 1/72 inch (one point)." },
+
+    { "key": "layers", "section": "layers", "name": "Layer List", "description": "Named layers (optional content groups) embedded in the file, such as CAD layers from AutoCAD or Revit exports." },
+    { "key": "layer_flags", "section": "layers", "name": "Layer Visibility & Print Flags", "description": "Whether each layer is shown and printed by default when the file is opened." },
+    { "key": "tagged_objects", "section": "layers", "name": "Tagged Object Properties", "description": "Object data attached to drawing elements, such as Category, Family, Type, Level, and Mark." },
+    { "key": "bb_custom_properties", "section": "layers", "name": "Bluebeam Custom Properties", "description": "User-defined document properties, such as those added in Bluebeam Revu or Acrobat." },
+    { "key": "bb_custom_columns", "section": "layers", "name": "Bluebeam Custom Columns", "description": "User-defined Markups List columns and the values stored on each markup." },
+    { "key": "bb_measurements", "section": "layers", "name": "Bluebeam Saved Measurements/Spaces", "description": "Length, area, count, and space markups with their stored measured values." },
+
+    { "key": "embedded_scale", "section": "scale", "name": "Embedded Scale", "description": "Drawing scale stored in the file's measure dictionary, present when scale was calibrated in Acrobat or Bluebeam." },
+    { "key": "geopdf", "section": "scale", "name": "GeoPDF Registration", "description": "Geographic coordinate system and control points that tie the drawing to real-world locations." },
+
+    { "key": "bookmarks", "section": "navigation", "name": "Bookmarks/Outline", "description": "The document's bookmark tree (table of contents)." },
+    { "key": "hyperlinks", "section": "navigation", "name": "Hyperlinks", "description": "Clickable links, both internal (sheet to sheet) and external (web addresses and other files)." },
+    { "key": "form_fields", "section": "navigation", "name": "Form Fields", "description": "Fillable form fields and their current values." },
+    { "key": "annotations", "section": "navigation", "name": "Annotations/Comments/Markups", "description": "Comments and markups placed on the pages, such as notes, text boxes, clouds, and shapes." },
+
+    { "key": "attachments", "section": "assets", "name": "Attachments", "description": "Files embedded inside the PDF." },
+    { "key": "fonts", "section": "assets", "name": "Fonts Used/Embedded", "description": "Fonts referenced by the pages. Fonts that are not embedded may display differently on other computers." },
+    { "key": "images", "section": "assets", "name": "Image Inventory", "description": "Raster images embedded in the pages." },
+
+    { "key": "permissions", "section": "security", "name": "Permissions/Restrictions", "description": "Actions the file restricts, such as printing, copying, or editing." },
+    { "key": "encryption", "section": "security", "name": "Encryption Status", "description": "Whether the file is encrypted, which method is used, and whether a password is needed to open it." }
+  ]
+}

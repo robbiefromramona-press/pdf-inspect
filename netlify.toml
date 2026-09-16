@@ -1,0 +1,22 @@
+# Static site: no build step. Netlify serves the repo root as-is.
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "SAMEORIGIN"
+
+# The engine files change only when their filenames or the site deploy changes.
+[[headers]]
+  for = "/engine/*.whl"
+  [headers.values]
+    Content-Type = "application/octet-stream"
+    Cache-Control = "public, max-age=604800"
+
+[[headers]]
+  for = "/engine/*.py"
+  [headers.values]
+    Content-Type = "text/plain; charset=utf-8"
