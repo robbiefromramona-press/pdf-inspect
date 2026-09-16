@@ -126,6 +126,39 @@ class FullFixtureTests(unittest.TestCase):
         self.assertEqual(self.f["permissions"]["status"], "absent")
 
 
+class RealExportLayoutTests(unittest.TestCase):
+    """Fixtures that copy the structure (not the content) of real exports."""
+
+    def test_revit_export(self):
+        report = inspect("revit-like.pdf")
+        f = report["fields"]
+        self.assertEqual(f["creator"]["summary"], "Autodesk Revit 2027")
+        tagged = f["tagged_objects"]["data"]
+        self.assertEqual(tagged["elementCount"], 4)
+        by_id = {e["id"]: e for e in tagged["elements"]}
+        self.assertEqual(by_id[5002]["view"], 1001)
+        self.assertEqual(by_id[5003]["view"], 1002)
+        self.assertEqual(tagged["sheets"][0]["view_sheet_number"], "A101")
+        self.assertIn("across 2 views", f["tagged_objects"]["summary"])
+        self.assertTrue(any("· sheet ·" in line for line in f["tagged_objects"]["detail"]))
+
+        scales = {v["viewId"]: v for v in f["embedded_scale"]["data"]}
+        self.assertEqual(scales[1001]["ratio"], 96)
+        self.assertEqual(scales[1001]["label"], '1/8" = 1\'-0"')
+        self.assertEqual(scales[1002]["ratio"], 48)
+        self.assertEqual(scales[1001]["bbox"], [-400.0, -250.0, -160.0, 100.0])
+        self.assertNotIn(9000, scales)  # the sheet itself isn't a view scale
+        self.assertIsNone(report["calibration"])  # relative scale is never auto-fed to CoordXY
+        self.assertIn("not Bluebeam", " ".join(f["bb_custom_properties"]["notes"]))
+
+    def test_bluebeam_columns_without_names(self):
+        f = inspect("bluebeam-like.pdf")["fields"]["bb_custom_columns"]
+        self.assertEqual(f["status"], "found")
+        self.assertTrue(f["summary"].startswith("4 columns — 2 markups with column values"))
+        self.assertIn("column 3: True", f["detail"][0])
+        self.assertIn("not stored in this file", f["notes"][0])
+
+
 class PlainAndSecurityTests(unittest.TestCase):
     def test_plain_file_is_mostly_absent(self):
         f = inspect("plain.pdf")["fields"]

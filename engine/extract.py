@@ -288,6 +288,27 @@ MEASUREMENT_SUBJECT = re.compile(
 )
 NON_MARKUP_ANNOTS = {"/Link", "/Widget", "/Popup"}
 
+# Content streams larger than this (in total) are not scanned for marked-content tags.
+MAX_CONTENT_SCAN_BYTES = 400 * 1024 * 1024
+
+# Marked-content operators in a page content stream:
+#   /Tag BMC   |   /Tag /PropName BDC   |   /Tag << ... >> BDC   |   EMC
+_MC_TOKEN = re.compile(rb"/([A-Za-z0-9_.#\-]+)\s*(?:(BMC)\b|/([A-Za-z0-9_.#\-]+)\s+BDC\b|(<<))|\b(EMC)\b")
+_REVIT_ELEMENT = re.compile(rb"^Element(\d+)$")
+_REVIT_VIEW = re.compile(rb"^ViewRegion(\d+)-(\d+)$")
+# A rectangular clip drawn right after a view region starts: the view's outline on the sheet.
+_CLIP_RECT = re.compile(
+    rb"^\s*(?:/[A-Za-z0-9_]+\s+BMC\s*)?(?:Q\s+)?q\s+(-?[\d.]+)\s+(-?[\d.]+)\s+m\s+(-?[\d.]+)\s+(-?[\d.]+)\s+l\s+"
+    rb"(-?[\d.]+)\s+(-?[\d.]+)\s+l\s+(-?[\d.]+)\s+(-?[\d.]+)\s+l\s+h\s+W")
+
+# Common drawing scales, keyed by model distance per paper distance.
+NAMED_SCALES = {
+    12: '1" = 1\'-0"', 16: '3/4" = 1\'-0"', 24: '1/2" = 1\'-0"', 32: '3/8" = 1\'-0"', 48: '1/4" = 1\'-0"',
+    64: '3/16" = 1\'-0"', 96: '1/8" = 1\'-0"', 128: '3/32" = 1\'-0"', 192: '1/16" = 1\'-0"', 384: '1/32" = 1\'-0"',
+    120: '1" = 10\'', 240: '1" = 20\'', 360: '1" = 30\'', 480: '1" = 40\'', 600: '1" = 50\'',
+    720: '1" = 60\'', 1200: '1" = 100\'', 2400: '1" = 200\'',
+}
+
 # Object-data field names shown first, in this order, when present.
 PREFERRED_PROPERTY_ORDER = ["Category", "Family", "Type", "Family and Type", "Level", "Mark", "Comments"]
 
@@ -313,6 +334,12 @@ class Inspector:
         self.soft_masks = set()      # image oids that are only transparency masks
         self.mc_properties = OrderedDict()  # oid -> marked-content property list
         self._resource_memo = {}
+        # Revit exports: element ids and view regions tagged in page content.
+        self.revit_elements = OrderedDict()  # element id -> {"page", "view"}
+        self.revit_views = OrderedDict()     # (page, view id, region) -> view record
+        self.revit_sheets = []               # sheet details Revit writes on each page
+        self.content_scan_skipped = False
+        self._content_bytes_scanned = 0
 
     # -- progress ---------------------------------------------------------
     def progress(self, label, fraction):
@@ -452,12 +479,78 @@ class Inspector:
                     self.lgi_dicts.append((page_no, lgi))
 
             self._scan_resources(dget(page, "/Resources"), page_no)
+            self._scan_revit_page(page, page_no)
 
             if total and (page_no == total or page_no % 5 == 0):
                 self.progress(f"Reading page {page_no:,} of {total:,}", 0.05 + 0.78 * page_no / total)
 
         acroform = dget(self.root, "/AcroForm")
         self._scan_resources(dget(acroform, "/DR"), None)
+
+    def _scan_revit_page(self, page, page_no):
+        """Revit writes sheet details as page keys and tags every drawn element
+        (/Element123 BMC) inside view regions (/ViewRegion456-1 /MC0 BDC)."""
+        sheet = {str(k)[len("/revit_metadata_"):]: one_line(txt(page.get(k)), 200)
+                 for k in page.keys() if str(k).startswith("/revit_metadata_")}
+        if sheet:
+            self.revit_sheets.append(dict(sheet, page=page_no))
+
+        properties = dget(dget(page, "/Resources"), "/Properties") or {}
+        has_view_props = any(isinstance(R(v), dict) and "/VP" in R(v) for v in properties.values())
+        if not sheet and not has_view_props:
+            return  # not a Revit page; don't decompress its drawing data
+        if self._content_bytes_scanned > MAX_CONTENT_SCAN_BYTES:
+            self.content_scan_skipped = True
+            return
+        try:
+            contents = page.get_contents()
+            data = contents.get_data() if contents is not None else b""
+        except Exception:
+            return
+        self._content_bytes_scanned += len(data)
+
+        stack = []
+        for m in _MC_TOKEN.finditer(data):
+            if m.group(5):  # EMC closes the innermost section
+                if stack:
+                    stack.pop()
+                continue
+            tag = m.group(1)
+            if m.group(4):  # "/Tag <<": only opens a section when the dictionary ends in BDC
+                end = data.find(b">>", m.end())
+                if end < 0 or not re.match(rb"\s*BDC\b", data[end + 2:end + 12]):
+                    continue
+            stack.append(tag)
+
+            element = _REVIT_ELEMENT.match(tag)
+            if element:
+                element_id = int(element.group(1))
+                if element_id not in self.revit_elements and len(self.revit_elements) < MAX_DATA_ITEMS * 10:
+                    view = next((t for t in reversed(stack[:-1]) if _REVIT_VIEW.match(t)), None)
+                    self.revit_elements[element_id] = {
+                        "page": page_no, "view": int(_REVIT_VIEW.match(view).group(1)) if view else None}
+                continue
+
+            view = _REVIT_VIEW.match(tag)
+            if view and m.group(3):
+                key = (page_no, int(view.group(1)), int(view.group(2)))
+                if key in self.revit_views:
+                    continue
+                prop = R(properties.get("/" + m.group(3).decode("latin-1")))
+                matrix = [num(v) for v in as_list(dget(prop, "/VP"))]
+                clip = _CLIP_RECT.match(data[m.end():m.end() + 400])
+                bbox = None
+                if clip:
+                    xs = [float(clip.group(i)) for i in (1, 3, 5, 7)]
+                    ys = [float(clip.group(i)) for i in (2, 4, 6, 8)]
+                    bbox = [min(xs), min(ys), max(xs), max(ys)]
+                self.revit_views[key] = {
+                    "page": page_no, "viewId": key[1], "region": key[2],
+                    "units": txt(dget(prop, "/UNITS")) or None,
+                    "transform": matrix if len(matrix) == 16 else None,
+                    "scaleFactor": matrix[0] if len(matrix) == 16 and matrix[0] else None,
+                    "bbox": bbox,
+                }
 
     def _scan_resources(self, resources, page_no, depth=0):
         """Record fonts, images and marked-content properties under a /Resources
@@ -614,8 +707,26 @@ class Inspector:
     def f_keywords(self):
         return self._info_or_xmp("/Keywords", self._xmp("pdf_keywords") or self._xmp("dc_subject"))
 
+    def _custom_info(self, name):
+        """A custom information-dictionary entry, matched without regard to case."""
+        if not isinstance(self.info, dict):
+            return ""
+        for key in self.info.keys():
+            if key not in STANDARD_INFO_KEYS and str(key)[1:].lower() == name:
+                return one_line(txt(self.info.get(key)), 300)
+        return ""
+
     def f_creator(self):
-        return self._info_or_xmp("/Creator", self._xmp("xmp_creator_tool"))
+        found = self._info_or_xmp("/Creator", self._xmp("xmp_creator_tool"))
+        if found["status"] == "found":
+            return found
+        # Revit leaves /Creator empty and writes lowercase custom keys instead.
+        custom = self._custom_info("creator")
+        if custom:
+            value = f"{custom} {self._custom_info('creator_version')}".strip()
+            return result(summary=value, notes=["Source: custom “creator” property in the document information dictionary."],
+                          data={"info": None, "xmp": None, "custom": value})
+        return found
 
     def f_producer(self):
         return self._info_or_xmp("/Producer", self._xmp("pdf_producer"))
@@ -854,7 +965,12 @@ class Inspector:
                 if kids is not None:
                     stack.append(kids)
 
-        mc = list(self.mc_properties.values())
+        # Revit's view transforms are marked-content properties too; they belong
+        # under Embedded Scale, not here.
+        mc = [m for m in self.mc_properties.values() if "VP" not in m["properties"]]
+        revit = self._revit_object_summary()
+        if not objects and not mc and revit:
+            return revit
         if not objects and not mc:
             if isinstance(struct_root, dict):
                 return absent("The file is tagged (it has a structure tree), but no object properties are attached to its elements.")
@@ -897,6 +1013,43 @@ class Inspector:
                       data={"objects": objects[:MAX_DATA_ITEMS], "objectCount": len(objects),
                             "markedContent": mc[:MAX_DATA_ITEMS], "fieldNames": ordered_names})
 
+    def _revit_object_summary(self):
+        if not self.revit_elements and not self.revit_sheets:
+            return None
+        lines = []
+        for sheet in self.revit_sheets:
+            number = sheet.get("view_sheet_number", "")
+            name = sheet.get("view_name", "")
+            label = name if (number and name.startswith(number)) else " – ".join(filter(None, [number, name]))
+            lines.append(f"p.{sheet['page']} · sheet {label or '(unnamed)'}" +
+                         (f" · view type {sheet['view_type']}" if sheet.get("view_type") else ""))
+        sheet_regions = {v["viewId"] for v in self._revit_view_scales() if v["isSheet"]}
+        by_view = OrderedDict()
+        for element_id, where in self.revit_elements.items():
+            by_view.setdefault((where["page"], where["view"]), []).append(element_id)
+        for (page_no, view_id), ids in by_view.items():
+            shown = ", ".join(str(i) for i in ids[:25]) + (f", … +{len(ids) - 25:,} more" if len(ids) > 25 else "")
+            where = ("sheet" if view_id in sheet_regions else f"view {view_id}") if view_id else "outside any view"
+            lines.append(f"p.{page_no} · {where} · {plural(len(ids), 'element')}: {shown}")
+
+        if self.revit_elements:
+            views = {v for _, v in by_view if v and v not in sheet_regions}
+            summary = f"{plural(len(self.revit_elements), 'Revit element')} tagged by element ID"
+            if views:
+                summary += f" across {plural(len(views), 'view')}"
+        else:
+            summary = f"Revit sheet details on {plural(len(self.revit_sheets), 'page')}"
+        notes = ["Source: Revit tags in the page content. This export carries element IDs only; "
+                 "no Category, Family, Type, or Level values are stored in the file."]
+        if self.content_scan_skipped:
+            notes.append("Some pages were not scanned because the file's drawing data is very large.")
+        return result(summary=summary, detail=lines, notes=notes, data={
+            "source": "revit",
+            "sheets": self.revit_sheets,
+            "elements": [dict(id=i, **w) for i, w in self.revit_elements.items()],
+            "elementCount": len(self.revit_elements),
+        })
+
     # -----------------------------------------------------------------------
     # Bluebeam
     # -----------------------------------------------------------------------
@@ -910,9 +1063,12 @@ class Inspector:
         if not custom:
             return absent("No custom document properties are set.")
         lines = [f"{k}: {v}" for k, v in custom.items()]
+        notes = ["Source: custom entries in the document information dictionary."]
+        writer = next((v for k, v in custom.items() if k.lower() == "creator"), "")
+        if writer and "bluebeam" not in writer.lower():
+            notes.append(f"These entries were written by {writer}, not Bluebeam.")
         return result(summary=plural(len(custom), "custom property", "custom properties"), detail=lines,
-                      notes=["Source: custom entries in the document information dictionary."],
-                      data=custom)
+                      notes=notes, data=custom)
 
     def _bluebeam_catalog_keys(self):
         return [k for k in (self.root or {}).keys() if str(k).startswith("/BSI")]
@@ -945,7 +1101,7 @@ class Inspector:
             if column_names and len(column_names) == len(values):
                 pairs = [f"{n}: {v}" for n, v in zip(column_names, values) if v]
             else:
-                pairs = [v for v in values if v]
+                pairs = [f"column {i}: {v}" for i, v in enumerate(values, 1) if v]
             rows.append({"page": page_no, "markup": kind, "values": values,
                          "line": f"p.{page_no} · {kind} · " + (", ".join(pairs) if pairs else "(all columns empty)")})
 
@@ -956,11 +1112,18 @@ class Inspector:
             return absent("No Bluebeam custom column data was found.")
 
         summary = []
+        notes = ["Read from Bluebeam's private data keys; layout can vary between Revu versions."]
         if column_names:
             summary.append(plural(len(column_names), "column") + ": " + ", ".join(n for n in column_names if n))
+        elif rows:
+            widths = Counter(len(r["values"]) for r in rows)
+            summary.append(plural(widths.most_common(1)[0][0], "column"))
+            notes.insert(0, "Column names are not stored in this file, so values are listed by position.")
         summary.append(f"{plural(len(rows), 'markup')} with column values")
-        return result(summary=" — ".join(summary), detail=[r.pop("line") for r in rows],
-                      notes=["Read from Bluebeam's private data keys; layout can vary between Revu versions."],
+        values = Counter(v for r in rows for v in r["values"])
+        if values:
+            summary.append("values: " + ", ".join(f"{v or '(blank)'} ×{n:,}" for v, n in values.most_common(4)))
+        return result(summary=" — ".join(summary), detail=[r.pop("line") for r in rows], notes=notes,
                       data={"columns": column_names, "markups": rows[:MAX_DATA_ITEMS]})
 
     def f_measurements(self):
@@ -1030,8 +1193,53 @@ class Inspector:
             })
         return records
 
+    def _revit_view_scales(self):
+        """Scale of each Revit view relative to its sheet. The sheet's own region
+        carries the largest scale factor, and a view at 1/8" = 1'-0" carries a
+        factor 96 times smaller. Only that ratio is used: the absolute units of
+        Revit's transform aren't documented."""
+        by_page = OrderedDict()
+        for record in self.revit_views.values():
+            if record["scaleFactor"]:
+                by_page.setdefault(record["page"], []).append(record)
+        out = []
+        for page_no, records in by_page.items():
+            sheet_factor = max(r["scaleFactor"] for r in records)
+            seen = set()
+            for r in records:
+                if r["viewId"] in seen:
+                    continue
+                seen.add(r["viewId"])
+                ratio = sheet_factor / r["scaleFactor"]
+                whole = round(ratio)
+                exact = abs(ratio - whole) < 0.01
+                crop = next((x["bbox"] for x in records if x["viewId"] == r["viewId"] and x["region"] >= 1 and x["bbox"]), None)
+                out.append({
+                    "page": page_no, "viewId": r["viewId"], "isSheet": abs(ratio - 1) < 1e-6,
+                    "ratio": whole if exact else ratio,
+                    "label": NAMED_SCALES.get(whole) if exact else None,
+                    "bbox": crop or r["bbox"], "units": r["units"], "transform": r["transform"],
+                    "source": "revit-view",
+                })
+        return out
+
     def f_embedded_scale(self):
         records = self._scale_records()
+        revit = [v for v in self._revit_view_scales() if not v["isSheet"]]
+        if not records and revit:
+            lines = [f"p.{v['page']} · Revit view {v['viewId']}: 1:{fmt_num(v['ratio'])}" +
+                     (f" ({v['label']})" if v["label"] else "") for v in revit]
+            scales = Counter((v["ratio"], v["label"]) for v in revit)
+            if len(scales) == 1:
+                ratio, label = next(iter(scales))
+                summary = f"{label or '1:' + fmt_num(ratio)} — {plural(len(revit), 'Revit view')}"
+            else:
+                summary = f"{len(scales)} different scales across {plural(len(revit), 'Revit view')}"
+            return result(summary=summary, detail=lines, data=revit, notes=[
+                "Source: Revit view transforms, measured relative to the sheet.",
+                "True on paper only if the PDF was printed at 100% of the sheet size. This is not a calibrated "
+                "measure dictionary, so it is not offered to CoordXY for automatic calibration.",
+            ])
         if not records:
             return absent("No calibrated scale (measure dictionary) is stored in the file.")
         lines = []

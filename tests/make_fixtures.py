@@ -215,10 +215,53 @@ def build_user_locked():
     return w
 
 
+def build_revit_like():
+    """Mirrors the structure of a real Revit 2027 export: lowercase custom info
+    keys, per-page sheet keys, view transforms as marked-content properties,
+    and /ElementNNN tags inside /ViewRegionNNN-N sections. All values invented."""
+    w = PdfWriter()
+    add = w._add_object
+    page = w.add_blank_page(17 * 72, 11 * 72)
+    w.add_metadata({"/creator": "Autodesk Revit", "/creator_version": "2027", "/document_id": "00000000-0000-0000-0000-000000000001"})
+    page.update({
+        N("/revit_metadata_view_name"): T("A101 - FLOOR PLAN "),
+        N("/revit_metadata_view_sheet_number"): T("A101 "),
+        N("/revit_metadata_view_type"): T("VT_Drafting "),
+    })
+
+    def view_props(scale):
+        vp = [scale, 0, 0, 10, 0, scale, 0, -20, 0, 0, scale, 0, 0, 0, 0, 1]
+        return add(D(PRECISION=I(5), UNITS=T("inches"), VP=A(*[F(v) for v in vp])))
+
+    page[N("/Resources")] = D(Properties=D(MC0=view_props(0.25), MC1=view_props(0.5), MC2=view_props(24)))
+    content = (
+        b"/ViewRegion1001-1 /MC0 BDC /Element5001 BMC q -400 100 m -400 -250 l -160 -250 l -160 100 l h W* n "
+        b"0 0 m 10 10 l S EMC /Element5002 BMC 1 1 m 2 2 l S EMC Q EMC "
+        b"/ViewRegion1002-1 /MC1 BDC /Element5003 BMC q 0 100 m 0 -250 l 200 -250 l 200 100 l h W* n EMC Q EMC "
+        b"/ViewRegion9000-0 /MC2 BDC /Element7001 BMC 5 5 m 6 6 l S EMC EMC "
+        b"/Artifact << /Type /Pagination >> BDC EMC"
+    )
+    page[N("/Contents")] = add(stream(content))
+    return w
+
+
+def build_bluebeam_like():
+    """Mirrors a real Revu markup set: /BSIColumnData arrays on markups with no
+    column definitions stored anywhere in the file."""
+    w = PdfWriter()
+    w.add_blank_page(36 * 72, 24 * 72)
+    w.add_metadata({"/Creator": "Bluebeam Stapler 20.2.85.2", "/Producer": "Acrobat Distiller 20.0 (Windows)"})
+    for i, flags in enumerate([("False", "False", "True", "False"), ("False", "True", "False", "False")]):
+        box = w.add_annotation(0, FreeText(text="", rect=(100, 100 + 60 * i, 200, 140 + 60 * i)))
+        box.update({N("/Subj"): T("Rectangle"), N("/T"): T("Reviewer"), N("/BSIColumnData"): A(*[T(v) for v in flags])})
+    return w
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     for name, build in [("full.pdf", build_full), ("plain.pdf", build_plain),
-                        ("owner-locked.pdf", build_owner_locked), ("user-locked.pdf", build_user_locked)]:
+                        ("owner-locked.pdf", build_owner_locked), ("user-locked.pdf", build_user_locked),
+                        ("revit-like.pdf", build_revit_like), ("bluebeam-like.pdf", build_bluebeam_like)]:
         path = OUT / name
         with open(path, "wb") as fh:
             build().write(fh)
