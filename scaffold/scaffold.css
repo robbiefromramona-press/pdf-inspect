@@ -140,3 +140,28 @@ a { color: var(--accent); }
   .sc-topbar, .sc-sidebar { display: none !important; }
   .sc-stage { padding: 0; }
 }
+
+/* Consent gate above the dropzone, and the persistent legal line. */
+.sc-upload-group { display: grid; gap: 14px; }
+.sc-consent {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.sc-consent p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.55; color: var(--text-dim); }
+.sc-consent-warn { color: var(--warn) !important; }
+.sc-consent-check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 13.5px; line-height: 1.45; color: var(--text); }
+.sc-consent-check input { margin: 2px 0 0; width: 17px; height: 17px; flex: none; cursor: pointer; accent-color: var(--accent); }
+.sc-dropzone.is-locked { opacity: 0.55; }
+.sc-dropzone.is-locked .sc-btn:disabled { cursor: not-allowed; }
+
+.sc-legal {
+  padding: 18px 24px 26px;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
+.sc-legal-warn { margin-top: 2px; }

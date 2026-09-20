@@ -13,7 +13,15 @@ const STEPS = [
   { id: 'report', label: 'Report' },
 ];
 
-const shell = mountShell(document.getElementById('app'), { app: { ...APP, homeUrl: './' }, steps: STEPS });
+const shell = mountShell(document.getElementById('app'), {
+  app: { ...APP, homeUrl: './' },
+  steps: STEPS,
+  legal: {
+    privacyUrl: 'https://totalstationtech.com/privacy.html',
+    termsUrl: 'https://totalstationtech.com/terms.html',
+    warn: 'Always verify what you find here against the contract documents before using it for field layout or construction.',
+  },
+});
 const store = new LocalInspectionStore();
 let runToken = 0;  // ignores results from a file the user has since replaced
 
@@ -63,6 +71,20 @@ async function showUpload(errorMessage) {
     maxBytes: MAX_FILE_BYTES,
     note: 'Your file is read inside this browser. It is never uploaded to a server.',
     onFile: inspectFile,
+    consent: {
+      notes: [
+        'This tool reads your PDF inside this browser. The file is never uploaded to or stored on our servers.',
+        `Saved inspections are kept in this browser only, for ${LOCAL_RETENTION_DAYS} days. Clearing your browser data removes them.`,
+      ],
+      warn: 'Scale, coordinates, layer data and object properties read out of a PDF must be independently verified by a qualified professional before being used for actual field layout or construction.',
+      label: [
+        'I have the right to upload this file and I agree to the ',
+        h('a', { href: 'https://totalstationtech.com/terms.html', target: '_blank', rel: 'noopener' }, 'Terms of Service'),
+        ' and ',
+        h('a', { href: 'https://totalstationtech.com/privacy.html', target: '_blank', rel: 'noopener' }, 'Privacy Policy'),
+        '.',
+      ],
+    },
   });
 
   setChildren(shell.stage,

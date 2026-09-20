@@ -51,7 +51,7 @@ export function icon(name, className = '') {
  *
  * Returns { sidebar, stage, setStep(id), setActions(nodes) }.
  */
-export function mountShell(root, { app, steps = [], actions = [] }) {
+export function mountShell(root, { app, steps = [], actions = [], legal = null }) {
   const stepsEl = h('nav', { class: 'sc-steps', 'aria-label': 'Progress' });
   const actionsEl = h('div', { class: 'sc-actions' });
   const sidebar = h('aside', { class: 'sc-sidebar' });
@@ -65,9 +65,20 @@ export function mountShell(root, { app, steps = [], actions = [] }) {
     ),
   );
 
+  // A persistent legal line, so someone who lands here from a saved link or a
+  // QR scan still sees the terms and the verify-before-you-build warning.
+  const legalBar = legal ? h('footer', { class: 'sc-legal' },
+    h('span', {}, legal.lead || 'Files processed per our '),
+    h('a', { href: legal.privacyUrl, target: '_blank', rel: 'noopener' }, 'Privacy Policy'),
+    h('span', {}, ' · '),
+    h('a', { href: legal.termsUrl, target: '_blank', rel: 'noopener' }, 'Terms of Service'),
+    legal.warn ? h('div', { class: 'sc-legal-warn' }, legal.warn) : null,
+  ) : null;
+
   root.replaceChildren(h('div', { class: 'sc-app' },
     h('header', { class: 'sc-topbar' }, brand, stepsEl, actionsEl),
     h('div', { class: 'sc-main' }, sidebar, stage),
+    legalBar,
   ));
 
   const toolsMenu = createToolsMenu(app.id);
@@ -118,11 +129,35 @@ function createToolsMenu(currentAppId) {
  * options.title      big line of text
  * options.note       small print under the button
  * options.onFile     called with the chosen File once it passes checks
+ * options.consent    optional gate shown above the dropzone. Until its box is
+ *                    ticked the button is disabled and drops are ignored.
+ *                    { notes: [string], warn: string, label: [nodes] }
  */
-export function createUploader({ accept = 'application/pdf', maxBytes, title = 'Drag & drop a PDF file here', buttonLabel = 'Choose PDF File', note, onFile }) {
+export function createUploader({ accept = 'application/pdf', maxBytes, title = 'Drag & drop a PDF file here', buttonLabel = 'Choose PDF File', note, onFile, consent = null }) {
   const input = h('input', { type: 'file', accept, tabindex: '-1', 'aria-hidden': 'true' });
   const error = h('div', { class: 'sc-drop-error', role: 'alert' });
   const button = h('button', { class: 'sc-btn', type: 'button', onclick: () => input.click() }, buttonLabel);
+
+  let consentBox = null;
+  let consentEl = null;
+  if (consent) {
+    consentBox = h('input', { type: 'checkbox', id: 'sc-consent' });
+    consentEl = h('div', { class: 'sc-consent' },
+      ...(consent.notes || []).map((t) => h('p', {}, t)),
+      consent.warn ? h('p', { class: 'sc-consent-warn' }, consent.warn) : null,
+      h('label', { class: 'sc-consent-check', for: 'sc-consent' },
+        consentBox,
+        h('span', {}, ...(consent.label || [])),
+      ),
+    );
+    const sync = () => {
+      button.disabled = !consentBox.checked;
+      zone.classList.toggle('is-locked', !consentBox.checked);
+    };
+    consentBox.addEventListener('change', () => { error.textContent = ''; sync(); });
+    queueMicrotask(sync);
+  }
+
   const zone = h('section', { class: 'sc-dropzone', 'aria-label': 'Upload a PDF' },
     icon('upload', 'sc-drop-icon'),
     h('div', { class: 'sc-drop-title' }, title),
@@ -136,6 +171,11 @@ export function createUploader({ accept = 'application/pdf', maxBytes, title = '
   async function accept_(file) {
     error.textContent = '';
     if (!file) return;
+    if (consentBox && !consentBox.checked) {
+      error.textContent = 'Tick the box above before choosing a file.';
+      consentBox.focus();
+      return;
+    }
     if (!(await looksLikePdf(file))) {
       error.textContent = `“${file.name}” isn't a PDF. Choose a .pdf file.`;
       return;
@@ -161,7 +201,9 @@ export function createUploader({ accept = 'application/pdf', maxBytes, title = '
     accept_(e.dataTransfer?.files?.[0]);  // one PDF at a time
   });
 
-  return zone;
+  // With a consent gate the caller gets both blocks; without one, just the zone,
+  // so existing callers keep working unchanged.
+  return consentEl ? h('div', { class: 'sc-upload-group' }, consentEl, zone) : zone;
 }
 
 // Check the file's first bytes for "%PDF-" rather than trusting the extension.
