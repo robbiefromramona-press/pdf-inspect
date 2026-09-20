@@ -17,8 +17,8 @@ const shell = mountShell(document.getElementById('app'), {
   app: { ...APP, homeUrl: './' },
   steps: STEPS,
   legal: {
-    privacyUrl: 'https://totalstationtech.com/privacy.html',
-    termsUrl: 'https://totalstationtech.com/terms.html',
+    privacyUrl: 'https://bim-press.com/privacy.html',
+    termsUrl: 'https://bim-press.com/terms.html',
     warn: 'Always verify what you find here against the contract documents before using it for field layout or construction.',
   },
 });
@@ -79,9 +79,9 @@ async function showUpload(errorMessage) {
       warn: 'Scale, coordinates, layer data and object properties read out of a PDF must be independently verified by a qualified professional before being used for actual field layout or construction.',
       label: [
         'I have the right to upload this file and I agree to the ',
-        h('a', { href: 'https://totalstationtech.com/terms.html', target: '_blank', rel: 'noopener' }, 'Terms of Service'),
+        h('a', { href: 'https://bim-press.com/terms.html', target: '_blank', rel: 'noopener' }, 'Terms of Service'),
         ' and ',
-        h('a', { href: 'https://totalstationtech.com/privacy.html', target: '_blank', rel: 'noopener' }, 'Privacy Policy'),
+        h('a', { href: 'https://bim-press.com/privacy.html', target: '_blank', rel: 'noopener' }, 'Privacy Policy'),
         '.',
       ],
     },
