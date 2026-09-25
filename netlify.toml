@@ -1,6 +1,18 @@
-# Static site: no build step. Netlify serves the repo root as-is.
+# Static site: Netlify serves the repo root. The build command minifies the
+# browser JS in place, in Netlify's own checkout, on the way to publishing --
+# your source files are never touched by it. ES module syntax, the export
+# names and the `new URL("./engine-worker.js", import.meta.url)` worker
+# reference all survive minification; verified by booting the minified build.
+#
+# IMPORTANT, and the reason this is only half a measure here: the actual
+# product is engine/extract.py, which is NOT touched by this and cannot be.
+# The browser has to fetch that file to run it in Pyodide, and the header
+# block below still serves it as text/plain, so it opens as readable source
+# in any browser tab. If the extraction engine is considered the asset worth
+# protecting, minifying the JS does not address it -- see AUDIT-REPORT.md.
 [build]
   publish = "."
+  command = 'npx --yes esbuild@0.25.0 js/*.js scaffold/*.js --minify --allow-overwrite --outdir=. --entry-names="[dir]/[name]"'
 
 [[headers]]
   for = "/*"
@@ -20,3 +32,13 @@
   for = "/engine/*.py"
   [headers.values]
     Content-Type = "text/plain; charset=utf-8"
+
+# ---- Password protection (free alternative to Netlify's Pro-only feature) ----
+# Runs on every request, before anything is served. The password itself is NOT
+# here: set BASIC_AUTH_CREDENTIALS in the Netlify dashboard for this site
+# (Site configuration > Environment variables), format  username:password
+# -- space-separated for several. With that variable unset this does nothing
+# and the site stays public. See netlify/edge-functions/basic-auth.ts.
+[[edge_functions]]
+  path = "/*"
+  function = "basic-auth"
