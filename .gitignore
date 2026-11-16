@@ -6,3 +6,9 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local secrets and private notes: never commit
+.env
+.env.*
+!.env.example
+_private/
