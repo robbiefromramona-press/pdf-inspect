@@ -32,13 +32,3 @@
   for = "/engine/*.py"
   [headers.values]
     Content-Type = "text/plain; charset=utf-8"
-
-# ---- Password protection (free alternative to Netlify's Pro-only feature) ----
-# Runs on every request, before anything is served. The password itself is NOT
-# here: set BASIC_AUTH_CREDENTIALS in the Netlify dashboard for this site
-# (Site configuration > Environment variables), format  username:password
-# -- space-separated for several. With that variable unset this does nothing
-# and the site stays public. See netlify/edge-functions/basic-auth.ts.
-[[edge_functions]]
-  path = "/*"
-  function = "basic-auth"
